@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    KEYSTONE package (POCO-vs-EF split).
+    The pure xAPI POCOs + their interfaces live here on netstandard2.0 so EVERY
+    tier can consume ONE shared contract: the node (net8), PC (net8-windows/3.1),
+    mobile (netstandard2.0/Xamarin), and the SDK. The heavy net8 Febris.ModelLibrary
+    (EF Core / Npgsql) references THIS project, not the other way around, so the
+    contract carries no data-access weight and stays netstandard2.0-clean.
+
+    Namespaces are DELIBERATELY unchanged (Febris.ModelLibrary.Models.XApiModels /
+    Febris.ModelLibrary.Interfaces.XApiModelInterfaces): assembly name != namespace
+    is fine, and every consumer across the solution keeps its existing FQNs.
+
+    [Key]/[Required]/[Display] resolve from System.ComponentModel.Annotations
+    (netstandard2.0-compatible); EF Core in the DAL still reads those attributes
+    fine wherever the type is defined.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <Configurations>Debug;Release;Staging;NotStaging</Configurations>
+  </PropertyGroup>
+
+  <!-- NuGet packaging. This is the KEYSTONE and the FIRST .nupkg the platform publishes: the node's
+       triad, mobile, pc and the SDK all restore from it, and a nuget.org version can be unlisted but
+       never deleted. Without this block `dotnet pack` emits authors="Febris.XApi.Models" (the
+       assembly name), description="Package Description" and NO licence element at all, which is
+       four of the four metadata checks in the node's publish-triad audit failing at once.
+
+       Apache-2.0, NOT AGPL-3.0-only. Deliberate and load-bearing: this is a shared data contract,
+       and a contract other people may only use under copyleft is not a shared contract. The
+       netstandard2.0 keystone exists so tiers on different runtimes and different licences can
+       agree on one definition of a Statement. Publishing it AGPL from the node repo would relicense
+       it, which is why publish-triad.yml must NOT list this project in PACKAGE_PROJECTS.
+
+       Version and RepositoryUrl are deliberately NOT set here, matching the triad's own reasoning:
+       CI supplies the version from the release tag, and PublishRepositoryUrl lets SourceLink stamp
+       the repository and commit actually being built, so the package cannot disagree with its own
+       provenance. PackageProjectUrl is likewise absent until the public repo name is settled:
+       hardcoding one today would bake in the unresolved febris-xapi-models versus Febris_XApiModels
+       question and could ship a 404 on the nuget.org listing. -->
+  <PropertyGroup>
+    <PackageId>Febris.XApi.Models</PackageId>
+    <Authors>Febris</Authors>
+    <Product>Febris</Product>
+    <Description>The xAPI (Experience API) object model as plain C# types: Statement, Actor, Verb, Object, Result, Context and their interfaces. netstandard2.0, one dependency, no persistence and no HTTP client.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageTags>xapi;experience-api;tincan;elearning;lrs;netstandard</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,41 @@
+Febris.XApi.Models
+Copyright 2026 Febris
+
+This product includes software developed by Febris.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY DEPENDENCIES
+
+This package takes exactly one dependency, which it does not redistribute:
+
+  System.ComponentModel.Annotations (5.0.0)
+  Copyright (c) .NET Foundation and Contributors
+  MIT License -- https://licenses.nuget.org/MIT
+  https://github.com/dotnet/runtime
+
+  Resolved from nuget.org at build time and referenced, not vendored. No source
+  or binary from it is included in this repository or in the published package.
+
+No other third-party code is included, referenced or redistributed.
+
+--------------------------------------------------------------------------------
+ON THE xAPI SPECIFICATION
+
+The type and member names in this package follow the Experience API (xAPI)
+specification, published by the Advanced Distributed Learning Initiative at
+https://github.com/adlnet/xAPI-Spec and licensed Apache-2.0.
+
+This package is an independent implementation of those shapes in C#. It is not
+produced, endorsed or certified by ADL, and no ADL specification text is
+reproduced here.

