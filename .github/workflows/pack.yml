@@ -269,7 +269,7 @@ jobs:
       # a dry run must not mint a credential it will never use.
       #
       # `user` is the nuget.org PROFILE NAME, not an email, and its case differs from the GitHub
-      # login (nuget Trget88, GitHub TRget88). It is not a secret: it is visible on the package page
+      # login (nuget Trget88, GitHub Febris-XR). It is not a secret: it is visible on the package page
       # and on the publishing policy itself.
       - name: NuGet login (OIDC to a short-lived key)
         if: ${{ github.event_name == 'push' || !inputs.dry_run }}
